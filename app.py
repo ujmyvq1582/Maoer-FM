@@ -1988,7 +1988,7 @@ class MaoerFrame(wx.Frame):
             )
             return
 
-        if item.need_pay:
+        if item.need_pay and item.kind != "sound":
             self._prompt_sound_purchase(item)
             return
 
@@ -2497,12 +2497,6 @@ class MaoerFrame(wx.Frame):
         if item.kind != "sound":
             if auto_current_key is not None:
                 wx.CallAfter(self._play_next_from_current_list, auto_current_key)
-            return
-        if item.need_pay:
-            if auto_current_key is not None:
-                self._skip_auto_purchase_required(auto_current_key, item)
-            else:
-                self._prompt_sound_purchase(item)
             return
         source_key = self._item_key(item)
         source_title = self.current_title

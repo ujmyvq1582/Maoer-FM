@@ -223,6 +223,7 @@ class MaoerApi:
         self._account_info_cache: AccountInfo | None = None
         self._drama_detail_cache: dict[int, dict[str, Any]] = {}
         self._purchased_full_drama_ids_cache: set[int] | None = None
+        self._member_vip_active_cache: bool | None = None
         self.session.headers.update(
             {
                 "User-Agent": USER_AGENT,
@@ -407,6 +408,7 @@ class MaoerApi:
             raise ApiError("登录成功但没有拿到 Cookie")
         self._account_info_cache = None
         self._purchased_full_drama_ids_cache = None
+        self._member_vip_active_cache = None
         self.cookie_header = cookie
         self.session.headers["Cookie"] = cookie
         return cookie
@@ -491,6 +493,7 @@ class MaoerApi:
         self._account_info_cache = None
         self._drama_detail_cache.pop(drama_id, None)
         self._purchased_full_drama_ids_cache = None
+        self._member_vip_active_cache = None
         return payload
 
     def buy_drama_episode(self, drama_id: int, sound_id: int) -> dict[str, Any]:
@@ -817,6 +820,7 @@ class MaoerApi:
         self._account_info_cache = None
         self._drama_detail_cache.clear()
         self._purchased_full_drama_ids_cache = None
+        self._member_vip_active_cache = None
         self.cookie_header = cookie.strip()
         if self.cookie_header:
             self.session.headers["Cookie"] = self.cookie_header
@@ -1785,19 +1789,24 @@ class MaoerApi:
         return self.album_sounds(album_id)[start:end]
 
     def playback_info(self, item: MediaItem) -> PlaybackInfo:
-        if item.need_pay:
-            raise PurchaseRequired(f"《{item.title}》需要购买后才能播放。")
-
         data = self._get("/sound/getsound", {"soundid": item.id})
         info = data.get("info") or {}
         sound = info.get("sound") or {}
+        if not isinstance(sound, dict):
+            sound = {}
         title = _text(sound.get("soundstr") or item.title)
         drama_id = item.drama_id or self._raw_drama_id(sound) or self._raw_drama_id(item.raw)
         full_drama_purchased = self._is_full_drama_purchased(drama_id)
+        vip_limited = self._is_vip_limited_sound(item.raw) or self._is_vip_limited_sound(sound)
+        member_vip = vip_limited and self._is_member_vip_active()
+        can_play_paid = full_drama_purchased or member_vip
+
+        if item.need_pay and not can_play_paid:
+            raise PurchaseRequired(f"《{title}》需要购买后才能播放。")
 
         url = _text(sound.get("soundurl") or sound.get("soundurl_128"))
         if not url:
-            if _to_bool(sound.get("need_pay")) and not full_drama_purchased:
+            if _to_bool(sound.get("need_pay")) and not can_play_paid:
                 raise PurchaseRequired(f"《{title}》需要购买后才能播放。")
 
         return PlaybackInfo(
@@ -1810,6 +1819,42 @@ class MaoerApi:
             duration_ms=_duration_ms(sound.get("duration")) or item.duration_ms,
             subtitle_url=_text(sound.get("subtitle_url")),
         )
+
+    @staticmethod
+    def _is_vip_limited_sound(sound: Any) -> bool:
+        if not isinstance(sound, dict):
+            return False
+        for key in ("vip", "is_vip", "isVip", "vip_free", "is_vip_free"):
+            if key in sound and _to_bool(sound.get(key)):
+                return True
+        return False
+
+    def _is_member_vip_active(self) -> bool:
+        if not getattr(self, "cookie_header", ""):
+            return False
+        cached = getattr(self, "_member_vip_active_cache", None)
+        if cached is not None:
+            return cached
+
+        try:
+            data = self._get("/x/vip/subscribe-info")
+        except (ApiError, requests.RequestException, ValueError):
+            active = False
+        else:
+            payload = data.get("data") or {}
+            vip_info = payload.get("user_vip_info") if isinstance(payload, dict) else None
+            if not isinstance(vip_info, dict):
+                vip_info = {}
+            status = _to_int(vip_info.get("status"))
+            active = status == 1
+            if status is None:
+                for key in ("is_vip", "isVip", "vip", "active", "valid"):
+                    if key in vip_info:
+                        active = _to_bool(vip_info.get(key))
+                        break
+
+        self._member_vip_active_cache = active
+        return active
 
     def add_play_times(self, playback: PlaybackInfo) -> None:
         params: dict[str, Any] = {"sound_id": playback.sound_id}
