@@ -48,7 +48,7 @@ from _build_info import APP_VERSION
 
 
 APP_TITLE = "猫耳FM"
-APP_AUTHOR = "欢喜就好"
+APP_AUTHOR = "欢喜就好&谷雨"
 HOTKEYS_TEXT_NAME = "热键表.txt"
 UPDATE_TEXT_NAME = "update.txt"
 
